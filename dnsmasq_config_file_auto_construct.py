@@ -2,6 +2,10 @@ import os
 import re
 import requests
 import yaml
+import logging
+
+# 配置日志记录
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 文件下载链接和名称
 files = {
@@ -22,10 +26,23 @@ files = {
 # 下载文件
 def download_files():
     for filename, url in files.items():
-        response = requests.get(url)
-        with open(filename, 'w', encoding="utf-8") as file:
-            file.write(response.text)
-        print(f"{filename} 已下载")
+        try:
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            with open(filename, 'w', encoding="utf-8") as file:
+                file.write(response.text)
+            logging.info(f"{filename} 已下载")
+        except (requests.RequestException, IOError) as e:
+            logging.error(f"下载 {filename} 失败: {e}")
+
+# 读取文件内容
+def read_file(file_path):
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.readlines()
+    except IOError as e:
+        logging.error(f"读取 {file_path} 失败: {e}")
+        return []
 
 # 从YAML文件和txt文件中提取域名
 def extract_domains():
@@ -34,8 +51,9 @@ def extract_domains():
     # 提取YAML文件中的域名
     yaml_files = ["Private_DIRECT.yaml", "WeChat.yaml", "Oracle.yaml", "Epic.yaml", "SteamCN.yaml", "Bing.yaml", "Microsoft.yaml"]
     for yaml_file in yaml_files:
-        with open(yaml_file, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f)
+        lines = read_file(yaml_file)
+        if lines:
+            data = yaml.safe_load('\n'.join(lines))
             payload = data.get("payload", [])
             for entry in payload:
                 if isinstance(entry, str):
@@ -49,42 +67,45 @@ def extract_domains():
     # 提取txt文件中的域名
     txt_files = ["icloud.txt", "apple.txt", "private.txt"]
     for txt_file in txt_files:
-        with open(txt_file, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            for line in lines:
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    # 使用正则表达式提取域名
-                    match = re.search(r"-\s*['\"]?(\+\.)?([a-zA-Z0-9.-]+)['\"]?", line)
-                    if match:
-                        domain = match.group(2)
-                        domain_list.add(domain)
+        lines = read_file(txt_file)
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                # 使用正则表达式提取域名
+                match = re.search(r"-\s*['\"]?(\+\.)?([a-zA-Z0-9.-]+)['\"]?", line)
+                if match:
+                    domain = match.group(2)
+                    domain_list.add(domain)
 
     return domain_list
 
 # 从direct.txt文件中过滤域名
 def filter_domains(domain_list):
-    with open("direct.txt", 'r', encoding='utf-8') as f:
-        direct_domains = {line.strip() for line in f if line.strip() and not line.startswith("#")}
+    lines = read_file("direct.txt")
+    direct_domains = {line.strip() for line in lines if line.strip() and not line.startswith("#")}
     return domain_list - direct_domains
 
 # 构建clash-core-bypass.conf配置文件
 def build_bypass_config(filtered_domains):
-    with open("clash-core-bypass.conf", "w", encoding="utf-8") as f:
-        for domain in filtered_domains:
-            f.write(f"nftset=/{domain}/4#inet#fw4#china_ip_route\n")
-    print("clash-core-bypass.conf 已创建")
+    try:
+        with open("clash-core-bypass.conf", "w", encoding="utf-8") as f:
+            for domain in filtered_domains:
+                f.write(f"nftset=/{domain}/4#inet#fw4#china_ip_route\n")
+        logging.info("clash-core-bypass.conf 已创建")
+    except IOError as e:
+        logging.error(f"创建 clash-core-bypass.conf 失败: {e}")
 
 # 构建合并配置文件
 def merge_configs():
-    with open("anti-ad.conf", "r", encoding="utf-8") as ad_file:
-        ad_content = ad_file.read()
-    with open("clash-core-bypass.conf", "r", encoding="utf-8") as bypass_file:
-        bypass_content = bypass_file.read()
+    try:
+        ad_content = ''.join(read_file("anti-ad.conf"))
+        bypass_content = ''.join(read_file("clash-core-bypass.conf"))
 
-    with open("anti-ad-bypass.conf", "w", encoding="utf-8") as merged_file:
-        merged_file.write(ad_content + "\n" + bypass_content)
-    print("anti-ad-bypass.conf 已创建")
+        with open("anti-ad-bypass.conf", "w", encoding="utf-8") as merged_file:
+            merged_file.write(ad_content + "\n" + bypass_content)
+        logging.info("anti-ad-bypass.conf 已创建")
+    except IOError as e:
+        logging.error(f"创建 anti-ad-bypass.conf 失败: {e}")
 
 # 主函数
 def main():
